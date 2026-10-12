@@ -1,0 +1,1071 @@
+{
+  "name": "AI Data Analysis Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {
+          "allowFileUploads": true,
+          "allowedFilesMimeTypes": "text/csv,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx",
+          "responseMode": "lastNode"
+        }
+      },
+      "id": "05a1b169-1d1e-4ccb-827d-e205a9288463",
+      "name": "Upload File and Ask",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -752,
+        544
+      ],
+      "webhookId": "9b62d94e-c8a1-4e67-b0b5-eb4795767f59"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst j = item.json || {};\nconst bin = item.binary || {};\nconst keys = Object.keys(bin);\nconst question = String(j.chatInput || '').trim();\nconst sessionId = String(j.sessionId || '').trim();\nif (keys.length > 0) {\n  const key = keys[0];\n  const meta = bin[key] || {};\n  const name = meta.fileName || 'upload';\n  const ext = name.indexOf('.') !== -1 ? name.split('.').pop().toLowerCase() : '';\n  const mime = String(meta.mimeType || '').toLowerCase();\n  let kind = 'invalid_file';\n  if (ext === 'csv' || (!ext && mime.indexOf('csv') !== -1)) kind = 'csv';\n  else if (ext === 'xlsx' || (!ext && mime.indexOf('spreadsheetml') !== -1)) kind = 'xlsx';\n  let error = kind === 'invalid_file' ? 'Unsupported file type \"' + (ext || mime || 'unknown') + '\". Please upload a .csv or .xlsx file.' : null;\n  const MAX_MB = 10;\n  const sm = String(meta.fileSize || '').toLowerCase().match(/([0-9.]+)[ ]*(kb|mb|gb|b)/);\n  if (!error && sm) {\n    const mb = parseFloat(sm[1]) * ({ b: 1 / 1048576, kb: 1 / 1024, mb: 1, gb: 1024 })[sm[2]];\n    if (mb > MAX_MB) { kind = 'invalid_file'; error = 'The file is ' + mb.toFixed(1) + ' MB; the maximum supported size is ' + MAX_MB + ' MB.'; }\n  }\n  const q = question || 'Give me an overview of this dataset: columns, data types, row count, missing values and a few sample records.';\n  return [{ json: { kind: kind, binary_key: key, file_name: name, file_type: ext || mime, question: q, dataset_id: '', session_id: sessionId, error: error }, binary: bin }];\n}\nif (question) {\n  return [{ json: { kind: 'question', question: question, dataset_id: '', session_id: sessionId } }];\n}\nreturn [{ json: { kind: 'invalid_request', error: 'Please attach a .csv or .xlsx file and/or type a question about your data.' } }];\n"
+      },
+      "id": "4225c426-4c0e-4607-8676-f75ddddd4294",
+      "name": "Inspect Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.kind }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "csv"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CSV file"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.kind }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "xlsx"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Excel file"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.kind }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "question"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Question"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Invalid request"
+        }
+      },
+      "id": "f8a61543-1db9-419b-8193-5ef0dfbf9265",
+      "name": "Route Request",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        496,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "={{ $json.binary_key }}",
+        "options": {
+          "enableBOM": true,
+          "relaxQuotes": true,
+          "headerRow": true,
+          "includeEmptyCells": true
+        }
+      },
+      "id": "27a9b8b5-29b2-437a-bbc3-7a59391c543a",
+      "name": "Parse CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1584,
+        0
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $('Inspect Request').first().json;\nconst MAX_ROWS = 20000;\nconst items = $input.all().filter(function (i) { return i.json && Object.keys(i.json).length > 0; });\nif (items.length === 0) {\n  return [{ json: { valid: false, file_name: meta.file_name, error: 'The file was read but contains no data rows. Make sure the first row holds column headers and the data follows below it.' } }];\n}\nif (items.length > MAX_ROWS) {\n  return [{ json: { valid: false, file_name: meta.file_name, error: 'The dataset has ' + items.length + ' rows; the maximum supported is ' + MAX_ROWS + '. Please upload a smaller file.' } }];\n}\nconst rows = items.map(function (i) { return i.json; });\nconst columns = [];\nrows.forEach(function (r) { Object.keys(r).forEach(function (k) { if (columns.indexOf(k) === -1) columns.push(k); }); });\nfunction isMissing(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }\nfunction toNum(v) {\n  if (isMissing(v)) return null;\n  if (typeof v === 'number') return isFinite(v) ? v : NaN;\n  if (typeof v === 'boolean') return NaN;\n  const s = String(v).trim().replace(/[ ,$€£₹%]/g, '');\n  if (s === '') return null;\n  const n = Number(s);\n  return isFinite(n) ? n : NaN;\n}\nfunction round(n) { return Math.round(n * 10000) / 10000; }\nconst BOOLS = ['true', 'false', 'yes', 'no'];\nconst warnings = [];\nconst profileCols = columns.map(function (col) {\n  const vals = rows.map(function (r) { return r[col]; });\n  const present = vals.filter(function (v) { return !isMissing(v); });\n  const p = present.length;\n  let numOk = 0; let numBad = 0; let dateOk = 0; let boolOk = 0;\n  const uniq = {};\n  const nums = [];\n  present.forEach(function (v) {\n    const n = toNum(v);\n    if (typeof n === 'number' && !isNaN(n)) { numOk++; nums.push(n); } else numBad++;\n    const s = String(v).trim();\n    if (typeof v === 'boolean' || BOOLS.indexOf(s.toLowerCase()) !== -1) boolOk++;\n    if (isNaN(Number(s)) && (s.indexOf('-') !== -1 || s.indexOf('/') !== -1) && !isNaN(Date.parse(s))) dateOk++;\n    uniq[s] = (uniq[s] || 0) + 1;\n  });\n  const uniqueCount = Object.keys(uniq).length;\n  let type = 'text';\n  if (p === 0) type = 'empty';\n  else if (boolOk === p) type = 'boolean';\n  else if (numOk === p) type = 'numeric';\n  else if (numOk / p >= 0.7) type = 'numeric';\n  else if (dateOk / p >= 0.8) type = 'date';\n  else if (uniqueCount <= Math.max(20, p * 0.5)) type = 'categorical';\n  const info = { name: col, type: type, role: type === 'numeric' ? 'numeric' : (type === 'date' ? 'date' : (type === 'text' || type === 'empty' ? 'text' : 'categorical')), non_missing_count: p, missing_count: vals.length - p, missing_pct: round((vals.length - p) / vals.length * 100), unique_count: uniqueCount, sample_values: Object.keys(uniq).slice(0, 3) };\n  if (type === 'numeric') {\n    info.invalid_numeric_count = numBad;\n    info.min = Math.min.apply(null, nums);\n    info.max = Math.max.apply(null, nums);\n    if (numBad > 0) warnings.push('Column ' + col + ' has ' + numBad + ' non-numeric value(s); they are excluded from numeric calculations.');\n  }\n  if (type === 'categorical' || type === 'boolean') {\n    info.top_values = Object.keys(uniq).map(function (k) { return { value: k, count: uniq[k] }; }).sort(function (a, b) { return b.count - a.count; }).slice(0, 5);\n  }\n  if (/^(__EMPTY|field[0-9]*|column[0-9]*)$/i.test(col) || col.trim() === '') warnings.push('Column \"' + col + '\" looks like it has no header name.');\n  if (p === 0) warnings.push('Column ' + col + ' is completely empty.');\n  return info;\n});\nconst pick = function (role) { return profileCols.filter(function (c) { return c.role === role; }).map(function (c) { return c.name; }); };\nconst profile = {\n  row_count: rows.length,\n  column_count: columns.length,\n  columns: profileCols,\n  numeric_columns: pick('numeric'),\n  categorical_columns: pick('categorical'),\n  date_columns: pick('date'),\n  text_columns: pick('text'),\n  total_missing_cells: profileCols.reduce(function (s, c) { return s + c.missing_count; }, 0),\n  warnings: warnings\n};\nconst datasetId = 'ds_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);\nreturn [{ json: { valid: true, dataset_id: datasetId, session_id: meta.session_id, file_name: meta.file_name, file_type: meta.file_type, row_count: rows.length, column_count: columns.length, profile: profile, profile_json: JSON.stringify(profile), rows_json: JSON.stringify(rows) } }];\n"
+      },
+      "id": "0c02f76d-e960-438b-9df9-ea21e0f26b60",
+      "name": "Profile Dataset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0136242b-5548-459b-927f-524640d4c0d3",
+      "name": "Dataset Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2448,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ziDrGhWXoCOGgE9q",
+          "cachedResultName": "analysis_datasets"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "dataset_id": "={{ $json.dataset_id }}",
+            "file_name": "={{ $json.file_name }}",
+            "file_type": "={{ $json.file_type }}",
+            "row_count": "={{ $json.row_count }}",
+            "column_count": "={{ $json.column_count }}",
+            "profile_json": "={{ $json.profile_json }}",
+            "rows_json": "={{ $json.rows_json }}",
+            "uploaded_at": "={{ $now.toISO() }}",
+            "session_id": "={{ $json.session_id }}"
+          },
+          "schema": [
+            {
+              "id": "dataset_id",
+              "displayName": "dataset_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "file_name",
+              "displayName": "file_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "file_type",
+              "displayName": "file_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_count",
+              "displayName": "row_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "column_count",
+              "displayName": "column_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "profile_json",
+              "displayName": "profile_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rows_json",
+              "displayName": "rows_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "uploaded_at",
+              "displayName": "uploaded_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "84c344df-506d-4932-a2fd-888b3492f606",
+      "name": "Store Dataset",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2672,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ziDrGhWXoCOGgE9q",
+          "cachedResultName": "analysis_datasets"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "session_id",
+              "keyValue": "={{ $('Inspect Request').first().json.session_id }}"
+            }
+          ]
+        },
+        "limit": 1,
+        "orderBy": true
+      },
+      "id": "a69ea5e5-e7ab-40ff-bd45-951d0173c7be",
+      "name": "Load Dataset",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        752,
+        592
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.dataset_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "758fe731-eaf6-4fec-98e9-1b9c0cf3d714",
+      "name": "Dataset Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        976,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Inspect Request').first().json.question || 'I just uploaded this dataset. Give me a short overview: rows, columns with their types, missing values, notable warnings and 3 useful questions I could ask.' }}",
+        "options": {
+          "systemMessage": "=You are a rigorous Data Analysis Agent. You answer questions ONLY by running your tools on the user's uploaded dataset.\n\nActive dataset: {{ $('Load Dataset').first().json.dataset_id }} (file: {{ $('Load Dataset').first().json.file_name }}), {{ $('Load Dataset').first().json.row_count }} rows, {{ $('Load Dataset').first().json.column_count }} columns.\nColumns (name: detected type): {{ (JSON.parse($('Load Dataset').first().json.profile_json || '{}').columns || []).map(c => c.name + ': ' + c.type).join(' | ') }}\n\nTools:\n- explore_dataset: structure, column types, row count, missing values, sample records, value counts of one column.\n- filter_records: return matching records and match count (equals, not_equals, contains, starts_with, in, greater_than, less_than, between, date_after, date_before, date_between, is_empty...).\n- calculate_statistics: sum, mean, median, mode, min, max, count, std dev, variance, quartiles, outliers, correlation for one or more columns (optional where filters).\n- group_and_aggregate: group by one or more columns with count/sum/mean/median/min/max/std_dev/count_distinct, ranking, share of total and highest-vs-lowest comparison.\n- create_chart: bar, horizontal_bar, line, pie, histogram, scatter charts; returns a chart_url image link.\n\nRules:\n1. ALWAYS call at least one tool before giving any number, record, column or chart. Never invent or estimate statistics, records, columns or chart links. Use the column names exactly as listed above.\n2. Pick the tool that matches the question; combine tools when needed (e.g. group_and_aggregate then create_chart). Pass arguments as structured JSON matching the tool schema.\n3. If the question is ambiguous (unclear column, metric, aggregation, time range or several plausible columns), ask one short clarifying question instead of guessing, listing the candidate columns.\n4. If the dataset lacks the needed column or information, say so clearly and list the columns that do exist.\n5. If a tool returns an error, explain it plainly and suggest a valid alternative (e.g. supported operators or chart types). Never hide errors.\n6. Answer format: a direct answer first, then the key numbers, then a one or two sentence explanation of how it was calculated (tool, columns, filters, aggregation), then evidence (a small markdown table of the top results or matching records). Mention missing or invalid values that were excluded.\n7. For charts, include the chart_url from the tool output exactly as returned, as a markdown image and as a plain link.\n8. Support follow-up questions: use the conversation history to resolve references like \"that region\" or \"now as a chart\", but re-run tools for any new numbers.\n9. Long-term memory: use recall_memories when the user mentions a saved metric, filter or preference (or asks what you remember) and apply it. Use save_memory only when the user explicitly asks to remember something; if the key already exists, tell the user you are replacing the old value. Use forget_memory only on explicit request. Never save datasets, records or full conversations. Memories are definitions only; still compute every number with the analysis tools.",
+          "maxIterations": 12,
+          "enableStreaming": false,
+          "forceToolCallOnFirstIteration": true
+        }
+      },
+      "id": "01e98494-8a71-44a9-9207-0c59438ecd1e",
+      "name": "Data Analysis Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1520,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini",
+          "cachedResultName": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "reasoningEffort": "low"
+        }
+      },
+      "id": "1b5be51e-2218-4f7f-8935-808848113a9a",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1200,
+        704
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ ($('Inspect Request').first().json.session_id || 'default') + ':' + $('Load Dataset').first().json.dataset_id }}",
+        "contextWindowLength": 10
+      },
+      "id": "9f972046-4669-4596-bca1-65ad550b79e4",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        1328,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Dataset Explorer. Returns column names, detected data types, numeric/categorical/date columns, row count, missing-value statistics, warnings and sample records. Pass column to get value counts and the profile for one column. Use for questions about dataset structure or content overview.",
+        "jsCode": "\nconst ds = $('Load Dataset').first().json;\nlet rows = [];\ntry { rows = JSON.parse(ds.rows_json || '[]'); } catch (e) { return JSON.stringify({ error: 'The stored dataset could not be read. Please upload the file again.' }); }\nlet profile = {};\ntry { profile = JSON.parse(ds.profile_json || '{}'); } catch (e) { profile = {}; }\nconst profileCols = profile.columns || [];\nconst columns = profileCols.length ? profileCols.map(function (c) { return c.name; }) : Object.keys(rows[0] || {});\nlet args = query;\nif (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\nargs = args || {};\nfunction isMissing(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }\nfunction toNum(v) {\n  if (isMissing(v)) return null;\n  if (typeof v === 'number') return isFinite(v) ? v : NaN;\n  if (typeof v === 'boolean') return NaN;\n  const s = String(v).trim().replace(/[ ,$€£₹%]/g, '');\n  if (s === '') return null;\n  const n = Number(s);\n  return isFinite(n) ? n : NaN;\n}\nfunction isNum(n) { return typeof n === 'number' && !isNaN(n); }\nfunction toDate(v) { if (isMissing(v)) return null; const t = Date.parse(String(v).trim()); return isNaN(t) ? null : t; }\nfunction round(n) { return isNum(n) ? Math.round(n * 10000) / 10000 : n; }\nfunction norm(s) { return String(s).trim().toLowerCase().replace(/[^a-z0-9]/g, ''); }\nfunction resolveCol(name) {\n  if (name === undefined || name === null || name === '') return null;\n  const n = String(name);\n  if (columns.indexOf(n) !== -1) return n;\n  const lower = n.trim().toLowerCase();\n  return columns.find(function (c) { return c.toLowerCase() === lower; }) || columns.find(function (c) { return norm(c) === norm(n); }) || null;\n}\nfunction missingColError(name) { return JSON.stringify({ error: 'Column not found in the uploaded dataset: ' + name, available_columns: columns }); }\nfunction asList(v) { if (v === undefined || v === null || v === '') return []; return Array.isArray(v) ? v : [v]; }\nconst OPS = ['equals','not_equals','contains','not_contains','starts_with','ends_with','in','greater_than','greater_or_equal','less_than','less_or_equal','between','date_on','date_after','date_before','date_between','is_empty','is_not_empty'];\nconst NUM_OPS = ['greater_than','greater_or_equal','less_than','less_or_equal','between'];\nconst DATE_OPS = ['date_on','date_after','date_before','date_between'];\nfunction prepareConditions(list) {\n  const out = [];\n  const conds = asList(list);\n  for (let i = 0; i < conds.length; i++) {\n    const c = conds[i] || {};\n    const col = resolveCol(c.column);\n    if (!col) return { error: missingColError(c.column) };\n    const op = String(c.operator || 'equals').trim().toLowerCase();\n    if (OPS.indexOf(op) === -1) return { error: JSON.stringify({ error: 'Unsupported filter operator: ' + op, supported_operators: OPS }) };\n    if (NUM_OPS.indexOf(op) !== -1) {\n      if (!isNum(toNum(c.value)) || (op === 'between' && !isNum(toNum(c.value2)))) return { error: JSON.stringify({ error: 'Operator ' + op + ' needs numeric value(s); got value=' + c.value + (op === 'between' ? ', value2=' + c.value2 : ''), column: col }) };\n    }\n    if (DATE_OPS.indexOf(op) !== -1) {\n      if (toDate(c.value) === null || (op === 'date_between' && toDate(c.value2) === null)) return { error: JSON.stringify({ error: 'Operator ' + op + ' needs valid date value(s) such as 2024-01-31; got value=' + c.value + (op === 'date_between' ? ', value2=' + c.value2 : ''), column: col }) };\n    }\n    out.push({ column: col, operator: op, value: c.value, value2: c.value2 });\n  }\n  return { conditions: out };\n}\nfunction testCond(row, c) {\n  const v = row[c.column];\n  const sv = isMissing(v) ? '' : String(v).trim().toLowerCase();\n  const target = c.value === undefined || c.value === null ? '' : String(c.value).trim().toLowerCase();\n  switch (c.operator) {\n    case 'is_empty': return isMissing(v);\n    case 'is_not_empty': return !isMissing(v);\n    case 'equals': { const a = toNum(v); const b = toNum(c.value); if (isNum(a) && isNum(b)) return a === b; return !isMissing(v) && sv === target; }\n    case 'not_equals': { const a = toNum(v); const b = toNum(c.value); if (isNum(a) && isNum(b)) return a !== b; return sv !== target; }\n    case 'contains': return !isMissing(v) && sv.indexOf(target) !== -1;\n    case 'not_contains': return sv.indexOf(target) === -1;\n    case 'starts_with': return !isMissing(v) && sv.indexOf(target) === 0;\n    case 'ends_with': return !isMissing(v) && sv.length >= target.length && sv.slice(sv.length - target.length) === target;\n    case 'in': { const list = Array.isArray(c.value) ? c.value : String(c.value).split(','); return list.some(function (x) { return String(x).trim().toLowerCase() === sv; }); }\n    case 'greater_than': { const a = toNum(v); return isNum(a) && a > toNum(c.value); }\n    case 'greater_or_equal': { const a = toNum(v); return isNum(a) && a >= toNum(c.value); }\n    case 'less_than': { const a = toNum(v); return isNum(a) && a < toNum(c.value); }\n    case 'less_or_equal': { const a = toNum(v); return isNum(a) && a <= toNum(c.value); }\n    case 'between': { const a = toNum(v); const lo = Math.min(toNum(c.value), toNum(c.value2)); const hi = Math.max(toNum(c.value), toNum(c.value2)); return isNum(a) && a >= lo && a <= hi; }\n    case 'date_on': { const d = toDate(v); const t = toDate(c.value); return d !== null && new Date(d).toISOString().slice(0, 10) === new Date(t).toISOString().slice(0, 10); }\n    case 'date_after': { const d = toDate(v); return d !== null && d > toDate(c.value); }\n    case 'date_before': { const d = toDate(v); return d !== null && d < toDate(c.value); }\n    case 'date_between': { const d = toDate(v); const a = toDate(c.value); const b = toDate(c.value2); return d !== null && d >= Math.min(a, b) && d <= Math.max(a, b); }\n    default: return false;\n  }\n}\nfunction rowMatches(row, conds, mode) {\n  if (!conds || conds.length === 0) return true;\n  return mode === 'any' ? conds.some(function (c) { return testCond(row, c); }) : conds.every(function (c) { return testCond(row, c); });\n}\nfunction percentile(sorted, p) {\n  if (sorted.length === 0) return null;\n  const idx = (sorted.length - 1) * p;\n  const lo = Math.floor(idx); const hi = Math.ceil(idx);\n  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);\n}\nfunction numbersOf(values) {\n  const nums = []; let missing = 0; let invalid = 0; const invalidExamples = [];\n  values.forEach(function (v) { const n = toNum(v); if (n === null) missing++; else if (isNaN(n)) { invalid++; if (invalidExamples.length < 5) invalidExamples.push(v); } else nums.push(n); });\n  return { nums: nums, missing: missing, invalid: invalid, invalidExamples: invalidExamples };\n}\nconst AGGS = ['count','count_non_missing','count_distinct','sum','mean','median','min','max','std_dev'];\nfunction normAgg(a) { const s = String(a || 'count').trim().toLowerCase(); if (s === 'avg' || s === 'average') return 'mean'; if (s === 'std' || s === 'stddev' || s === 'standard_deviation') return 'std_dev'; if (s === 'distinct' || s === 'unique') return 'count_distinct'; return s; }\nfunction aggregate(values, agg) {\n  if (agg === 'count') return values.length;\n  if (agg === 'count_non_missing') return values.filter(function (v) { return !isMissing(v); }).length;\n  if (agg === 'count_distinct') { const seen = {}; values.forEach(function (v) { if (!isMissing(v)) seen[String(v).trim()] = 1; }); return Object.keys(seen).length; }\n  const nums = numbersOf(values).nums;\n  if (nums.length === 0) return null;\n  if (agg === 'sum') return nums.reduce(function (a, b) { return a + b; }, 0);\n  if (agg === 'mean') return nums.reduce(function (a, b) { return a + b; }, 0) / nums.length;\n  const sorted = nums.slice().sort(function (a, b) { return a - b; });\n  if (agg === 'median') return percentile(sorted, 0.5);\n  if (agg === 'min') return sorted[0];\n  if (agg === 'max') return sorted[sorted.length - 1];\n  if (agg === 'std_dev') { if (nums.length < 2) return 0; const m = nums.reduce(function (a, b) { return a + b; }, 0) / nums.length; return Math.sqrt(nums.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / (nums.length - 1)); }\n  return null;\n}\n\nconst sampleSize = Math.min(Math.max(parseInt(args.sample_size, 10) || 5, 1), 20);\nif (args.column) {\n  const col = resolveCol(args.column);\n  if (!col) return missingColError(args.column);\n  const info = profileCols.find(function (c) { return c.name === col; }) || { name: col };\n  const counts = {};\n  rows.forEach(function (r) { const v = r[col]; const k = isMissing(v) ? '(missing)' : String(v).trim(); counts[k] = (counts[k] || 0) + 1; });\n  const top = Object.keys(counts).map(function (k) { return { value: k, count: counts[k] }; }).sort(function (a, b) { return b.count - a.count; }).slice(0, 15);\n  return JSON.stringify({ tool: 'explore_dataset', column_profile: info, distinct_values_including_missing: Object.keys(counts).length, top_15_value_counts: top, row_count: rows.length });\n}\nlet totalMissing = 0;\nconst withMissing = [];\nprofileCols.forEach(function (c) { totalMissing += c.missing_count || 0; if (c.missing_count > 0) withMissing.push({ column: c.name, missing_count: c.missing_count, missing_pct: c.missing_pct }); });\nconst result = {\n  tool: 'explore_dataset',\n  dataset_id: ds.dataset_id,\n  file_name: ds.file_name,\n  row_count: rows.length,\n  column_count: columns.length,\n  numeric_columns: profile.numeric_columns || [],\n  categorical_columns: profile.categorical_columns || [],\n  date_columns: profile.date_columns || [],\n  text_columns: profile.text_columns || [],\n  total_missing_cells: totalMissing,\n  columns_with_missing_values: withMissing,\n  columns: profileCols,\n  warnings: profile.warnings || []\n};\nif (args.include_sample !== false) result.sample_records = rows.slice(0, sampleSize);\nreturn JSON.stringify(result);\n",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\"type\":\"object\",\"properties\":{\"column\":{\"type\":\"string\",\"description\":\"Optional: one column to inspect in detail\"},\"sample_size\":{\"type\":\"number\",\"description\":\"Number of sample records (1-20, default 5)\"},\"include_sample\":{\"type\":\"boolean\",\"description\":\"Include sample records (default true)\"}}}"
+      },
+      "id": "4536ca67-cffd-45ec-913b-bdc30c7f3bfe",
+      "name": "explore_dataset",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        1456,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Data Filtering and Search. Filters rows with conditions (equals, contains, greater_than, less_than, between, date ranges, is_empty...) and returns the match count plus matching records, optionally sorted and limited to selected columns. Use to find, list or count specific records.",
+        "jsCode": "\nconst ds = $('Load Dataset').first().json;\nlet rows = [];\ntry { rows = JSON.parse(ds.rows_json || '[]'); } catch (e) { return JSON.stringify({ error: 'The stored dataset could not be read. Please upload the file again.' }); }\nlet profile = {};\ntry { profile = JSON.parse(ds.profile_json || '{}'); } catch (e) { profile = {}; }\nconst profileCols = profile.columns || [];\nconst columns = profileCols.length ? profileCols.map(function (c) { return c.name; }) : Object.keys(rows[0] || {});\nlet args = query;\nif (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\nargs = args || {};\nfunction isMissing(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }\nfunction toNum(v) {\n  if (isMissing(v)) return null;\n  if (typeof v === 'number') return isFinite(v) ? v : NaN;\n  if (typeof v === 'boolean') return NaN;\n  const s = String(v).trim().replace(/[ ,$€£₹%]/g, '');\n  if (s === '') return null;\n  const n = Number(s);\n  return isFinite(n) ? n : NaN;\n}\nfunction isNum(n) { return typeof n === 'number' && !isNaN(n); }\nfunction toDate(v) { if (isMissing(v)) return null; const t = Date.parse(String(v).trim()); return isNaN(t) ? null : t; }\nfunction round(n) { return isNum(n) ? Math.round(n * 10000) / 10000 : n; }\nfunction norm(s) { return String(s).trim().toLowerCase().replace(/[^a-z0-9]/g, ''); }\nfunction resolveCol(name) {\n  if (name === undefined || name === null || name === '') return null;\n  const n = String(name);\n  if (columns.indexOf(n) !== -1) return n;\n  const lower = n.trim().toLowerCase();\n  return columns.find(function (c) { return c.toLowerCase() === lower; }) || columns.find(function (c) { return norm(c) === norm(n); }) || null;\n}\nfunction missingColError(name) { return JSON.stringify({ error: 'Column not found in the uploaded dataset: ' + name, available_columns: columns }); }\nfunction asList(v) { if (v === undefined || v === null || v === '') return []; return Array.isArray(v) ? v : [v]; }\nconst OPS = ['equals','not_equals','contains','not_contains','starts_with','ends_with','in','greater_than','greater_or_equal','less_than','less_or_equal','between','date_on','date_after','date_before','date_between','is_empty','is_not_empty'];\nconst NUM_OPS = ['greater_than','greater_or_equal','less_than','less_or_equal','between'];\nconst DATE_OPS = ['date_on','date_after','date_before','date_between'];\nfunction prepareConditions(list) {\n  const out = [];\n  const conds = asList(list);\n  for (let i = 0; i < conds.length; i++) {\n    const c = conds[i] || {};\n    const col = resolveCol(c.column);\n    if (!col) return { error: missingColError(c.column) };\n    const op = String(c.operator || 'equals').trim().toLowerCase();\n    if (OPS.indexOf(op) === -1) return { error: JSON.stringify({ error: 'Unsupported filter operator: ' + op, supported_operators: OPS }) };\n    if (NUM_OPS.indexOf(op) !== -1) {\n      if (!isNum(toNum(c.value)) || (op === 'between' && !isNum(toNum(c.value2)))) return { error: JSON.stringify({ error: 'Operator ' + op + ' needs numeric value(s); got value=' + c.value + (op === 'between' ? ', value2=' + c.value2 : ''), column: col }) };\n    }\n    if (DATE_OPS.indexOf(op) !== -1) {\n      if (toDate(c.value) === null || (op === 'date_between' && toDate(c.value2) === null)) return { error: JSON.stringify({ error: 'Operator ' + op + ' needs valid date value(s) such as 2024-01-31; got value=' + c.value + (op === 'date_between' ? ', value2=' + c.value2 : ''), column: col }) };\n    }\n    out.push({ column: col, operator: op, value: c.value, value2: c.value2 });\n  }\n  return { conditions: out };\n}\nfunction testCond(row, c) {\n  const v = row[c.column];\n  const sv = isMissing(v) ? '' : String(v).trim().toLowerCase();\n  const target = c.value === undefined || c.value === null ? '' : String(c.value).trim().toLowerCase();\n  switch (c.operator) {\n    case 'is_empty': return isMissing(v);\n    case 'is_not_empty': return !isMissing(v);\n    case 'equals': { const a = toNum(v); const b = toNum(c.value); if (isNum(a) && isNum(b)) return a === b; return !isMissing(v) && sv === target; }\n    case 'not_equals': { const a = toNum(v); const b = toNum(c.value); if (isNum(a) && isNum(b)) return a !== b; return sv !== target; }\n    case 'contains': return !isMissing(v) && sv.indexOf(target) !== -1;\n    case 'not_contains': return sv.indexOf(target) === -1;\n    case 'starts_with': return !isMissing(v) && sv.indexOf(target) === 0;\n    case 'ends_with': return !isMissing(v) && sv.length >= target.length && sv.slice(sv.length - target.length) === target;\n    case 'in': { const list = Array.isArray(c.value) ? c.value : String(c.value).split(','); return list.some(function (x) { return String(x).trim().toLowerCase() === sv; }); }\n    case 'greater_than': { const a = toNum(v); return isNum(a) && a > toNum(c.value); }\n    case 'greater_or_equal': { const a = toNum(v); return isNum(a) && a >= toNum(c.value); }\n    case 'less_than': { const a = toNum(v); return isNum(a) && a < toNum(c.value); }\n    case 'less_or_equal': { const a = toNum(v); return isNum(a) && a <= toNum(c.value); }\n    case 'between': { const a = toNum(v); const lo = Math.min(toNum(c.value), toNum(c.value2)); const hi = Math.max(toNum(c.value), toNum(c.value2)); return isNum(a) && a >= lo && a <= hi; }\n    case 'date_on': { const d = toDate(v); const t = toDate(c.value); return d !== null && new Date(d).toISOString().slice(0, 10) === new Date(t).toISOString().slice(0, 10); }\n    case 'date_after': { const d = toDate(v); return d !== null && d > toDate(c.value); }\n    case 'date_before': { const d = toDate(v); return d !== null && d < toDate(c.value); }\n    case 'date_between': { const d = toDate(v); const a = toDate(c.value); const b = toDate(c.value2); return d !== null && d >= Math.min(a, b) && d <= Math.max(a, b); }\n    default: return false;\n  }\n}\nfunction rowMatches(row, conds, mode) {\n  if (!conds || conds.length === 0) return true;\n  return mode === 'any' ? conds.some(function (c) { return testCond(row, c); }) : conds.every(function (c) { return testCond(row, c); });\n}\nfunction percentile(sorted, p) {\n  if (sorted.length === 0) return null;\n  const idx = (sorted.length - 1) * p;\n  const lo = Math.floor(idx); const hi = Math.ceil(idx);\n  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);\n}\nfunction numbersOf(values) {\n  const nums = []; let missing = 0; let invalid = 0; const invalidExamples = [];\n  values.forEach(function (v) { const n = toNum(v); if (n === null) missing++; else if (isNaN(n)) { invalid++; if (invalidExamples.length < 5) invalidExamples.push(v); } else nums.push(n); });\n  return { nums: nums, missing: missing, invalid: invalid, invalidExamples: invalidExamples };\n}\nconst AGGS = ['count','count_non_missing','count_distinct','sum','mean','median','min','max','std_dev'];\nfunction normAgg(a) { const s = String(a || 'count').trim().toLowerCase(); if (s === 'avg' || s === 'average') return 'mean'; if (s === 'std' || s === 'stddev' || s === 'standard_deviation') return 'std_dev'; if (s === 'distinct' || s === 'unique') return 'count_distinct'; return s; }\nfunction aggregate(values, agg) {\n  if (agg === 'count') return values.length;\n  if (agg === 'count_non_missing') return values.filter(function (v) { return !isMissing(v); }).length;\n  if (agg === 'count_distinct') { const seen = {}; values.forEach(function (v) { if (!isMissing(v)) seen[String(v).trim()] = 1; }); return Object.keys(seen).length; }\n  const nums = numbersOf(values).nums;\n  if (nums.length === 0) return null;\n  if (agg === 'sum') return nums.reduce(function (a, b) { return a + b; }, 0);\n  if (agg === 'mean') return nums.reduce(function (a, b) { return a + b; }, 0) / nums.length;\n  const sorted = nums.slice().sort(function (a, b) { return a - b; });\n  if (agg === 'median') return percentile(sorted, 0.5);\n  if (agg === 'min') return sorted[0];\n  if (agg === 'max') return sorted[sorted.length - 1];\n  if (agg === 'std_dev') { if (nums.length < 2) return 0; const m = nums.reduce(function (a, b) { return a + b; }, 0) / nums.length; return Math.sqrt(nums.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / (nums.length - 1)); }\n  return null;\n}\n\nconst prep = prepareConditions(args.conditions);\nif (prep.error) return prep.error;\nconst mode = String(args.match || 'all').toLowerCase() === 'any' ? 'any' : 'all';\nconst limit = Math.min(Math.max(parseInt(args.limit, 10) || 20, 1), 100);\nlet matches = rows.filter(function (r) { return rowMatches(r, prep.conditions, mode); });\nlet sortedBy = null;\nif (args.sort_by) {\n  const sc = resolveCol(args.sort_by);\n  if (!sc) return missingColError(args.sort_by);\n  const dir = String(args.sort_direction || 'desc').toLowerCase() === 'asc' ? 1 : -1;\n  matches = matches.slice().sort(function (a, b) {\n    const x = toNum(a[sc]); const y = toNum(b[sc]);\n    if (isNum(x) && isNum(y)) return (x - y) * dir;\n    if (isMissing(a[sc])) return 1; if (isMissing(b[sc])) return -1;\n    return String(a[sc]).localeCompare(String(b[sc])) * dir;\n  });\n  sortedBy = { column: sc, direction: dir === 1 ? 'asc' : 'desc' };\n}\nlet outCols = null;\nconst rc = asList(args.return_columns);\nif (rc.length) {\n  outCols = [];\n  for (let i = 0; i < rc.length; i++) { const c = resolveCol(rc[i]); if (!c) return missingColError(rc[i]); outCols.push(c); }\n}\nconst records = matches.slice(0, limit).map(function (r) { if (!outCols) return r; const o = {}; outCols.forEach(function (c) { o[c] = r[c]; }); return o; });\nreturn JSON.stringify({\n  tool: 'filter_records',\n  conditions_applied: prep.conditions,\n  match_mode: mode,\n  total_rows: rows.length,\n  match_count: matches.length,\n  match_pct: rows.length ? round(matches.length / rows.length * 100) : 0,\n  returned_records: records.length,\n  truncated: matches.length > records.length,\n  sorted_by: sortedBy,\n  records: records,\n  note: 'Rows whose value is missing or not a valid number/date never satisfy numeric or date conditions.'\n});\n",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\"type\":\"object\",\"properties\":{\"conditions\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"column\":{\"type\":\"string\",\"description\":\"Exact column name\"},\"operator\":{\"type\":\"string\",\"enum\":[\"equals\",\"not_equals\",\"contains\",\"not_contains\",\"starts_with\",\"ends_with\",\"in\",\"greater_than\",\"greater_or_equal\",\"less_than\",\"less_or_equal\",\"between\",\"date_on\",\"date_after\",\"date_before\",\"date_between\",\"is_empty\",\"is_not_empty\"]},\"value\":{\"type\":\"string\",\"description\":\"Comparison value (number, text, ISO date, or comma-separated list for in)\"},\"value2\":{\"type\":\"string\",\"description\":\"Upper bound for between / date_between\"}},\"required\":[\"column\",\"operator\"]},\"description\":\"Filter conditions; empty means all rows\"},\"match\":{\"type\":\"string\",\"enum\":[\"all\",\"any\"],\"description\":\"all = AND, any = OR (default all)\"},\"sort_by\":{\"type\":\"string\",\"description\":\"Optional column to sort matches by\"},\"sort_direction\":{\"type\":\"string\",\"enum\":[\"asc\",\"desc\"]},\"limit\":{\"type\":\"number\",\"description\":\"Max records to return (1-100, default 20)\"},\"return_columns\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Optional subset of columns to return\"}}}"
+      },
+      "id": "0d57d51d-da51-4f9f-81c3-cdd1a0fa543b",
+      "name": "filter_records",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        1584,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Statistical Analysis. For one or more columns computes count, sum, mean, median, mode, min, max, range, standard deviation, variance, quartiles, percentiles and outliers; reports missing and invalid numeric values explicitly. Categorical columns get frequency counts. Optional where filters and Pearson correlation with another column.",
+        "jsCode": "\nconst ds = $('Load Dataset').first().json;\nlet rows = [];\ntry { rows = JSON.parse(ds.rows_json || '[]'); } catch (e) { return JSON.stringify({ error: 'The stored dataset could not be read. Please upload the file again.' }); }\nlet profile = {};\ntry { profile = JSON.parse(ds.profile_json || '{}'); } catch (e) { profile = {}; }\nconst profileCols = profile.columns || [];\nconst columns = profileCols.length ? profileCols.map(function (c) { return c.name; }) : Object.keys(rows[0] || {});\nlet args = query;\nif (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\nargs = args || {};\nfunction isMissing(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }\nfunction toNum(v) {\n  if (isMissing(v)) return null;\n  if (typeof v === 'number') return isFinite(v) ? v : NaN;\n  if (typeof v === 'boolean') return NaN;\n  const s = String(v).trim().replace(/[ ,$€£₹%]/g, '');\n  if (s === '') return null;\n  const n = Number(s);\n  return isFinite(n) ? n : NaN;\n}\nfunction isNum(n) { return typeof n === 'number' && !isNaN(n); }\nfunction toDate(v) { if (isMissing(v)) return null; const t = Date.parse(String(v).trim()); return isNaN(t) ? null : t; }\nfunction round(n) { return isNum(n) ? Math.round(n * 10000) / 10000 : n; }\nfunction norm(s) { return String(s).trim().toLowerCase().replace(/[^a-z0-9]/g, ''); }\nfunction resolveCol(name) {\n  if (name === undefined || name === null || name === '') return null;\n  const n = String(name);\n  if (columns.indexOf(n) !== -1) return n;\n  const lower = n.trim().toLowerCase();\n  return columns.find(function (c) { return c.toLowerCase() === lower; }) || columns.find(function (c) { return norm(c) === norm(n); }) || null;\n}\nfunction missingColError(name) { return JSON.stringify({ error: 'Column not found in the uploaded dataset: ' + name, available_columns: columns }); }\nfunction asList(v) { if (v === undefined || v === null || v === '') return []; return Array.isArray(v) ? v : [v]; }\nconst OPS = ['equals','not_equals','contains','not_contains','starts_with','ends_with','in','greater_than','greater_or_equal','less_than','less_or_equal','between','date_on','date_after','date_before','date_between','is_empty','is_not_empty'];\nconst NUM_OPS = ['greater_than','greater_or_equal','less_than','less_or_equal','between'];\nconst DATE_OPS = ['date_on','date_after','date_before','date_between'];\nfunction prepareConditions(list) {\n  const out = [];\n  const conds = asList(list);\n  for (let i = 0; i < conds.length; i++) {\n    const c = conds[i] || {};\n    const col = resolveCol(c.column);\n    if (!col) return { error: missingColError(c.column) };\n    const op = String(c.operator || 'equals').trim().toLowerCase();\n    if (OPS.indexOf(op) === -1) return { error: JSON.stringify({ error: 'Unsupported filter operator: ' + op, supported_operators: OPS }) };\n    if (NUM_OPS.indexOf(op) !== -1) {\n      if (!isNum(toNum(c.value)) || (op === 'between' && !isNum(toNum(c.value2)))) return { error: JSON.stringify({ error: 'Operator ' + op + ' needs numeric value(s); got value=' + c.value + (op === 'between' ? ', value2=' + c.value2 : ''), column: col }) };\n    }\n    if (DATE_OPS.indexOf(op) !== -1) {\n      if (toDate(c.value) === null || (op === 'date_between' && toDate(c.value2) === null)) return { error: JSON.stringify({ error: 'Operator ' + op + ' needs valid date value(s) such as 2024-01-31; got value=' + c.value + (op === 'date_between' ? ', value2=' + c.value2 : ''), column: col }) };\n    }\n    out.push({ column: col, operator: op, value: c.value, value2: c.value2 });\n  }\n  return { conditions: out };\n}\nfunction testCond(row, c) {\n  const v = row[c.column];\n  const sv = isMissing(v) ? '' : String(v).trim().toLowerCase();\n  const target = c.value === undefined || c.value === null ? '' : String(c.value).trim().toLowerCase();\n  switch (c.operator) {\n    case 'is_empty': return isMissing(v);\n    case 'is_not_empty': return !isMissing(v);\n    case 'equals': { const a = toNum(v); const b = toNum(c.value); if (isNum(a) && isNum(b)) return a === b; return !isMissing(v) && sv === target; }\n    case 'not_equals': { const a = toNum(v); const b = toNum(c.value); if (isNum(a) && isNum(b)) return a !== b; return sv !== target; }\n    case 'contains': return !isMissing(v) && sv.indexOf(target) !== -1;\n    case 'not_contains': return sv.indexOf(target) === -1;\n    case 'starts_with': return !isMissing(v) && sv.indexOf(target) === 0;\n    case 'ends_with': return !isMissing(v) && sv.length >= target.length && sv.slice(sv.length - target.length) === target;\n    case 'in': { const list = Array.isArray(c.value) ? c.value : String(c.value).split(','); return list.some(function (x) { return String(x).trim().toLowerCase() === sv; }); }\n    case 'greater_than': { const a = toNum(v); return isNum(a) && a > toNum(c.value); }\n    case 'greater_or_equal': { const a = toNum(v); return isNum(a) && a >= toNum(c.value); }\n    case 'less_than': { const a = toNum(v); return isNum(a) && a < toNum(c.value); }\n    case 'less_or_equal': { const a = toNum(v); return isNum(a) && a <= toNum(c.value); }\n    case 'between': { const a = toNum(v); const lo = Math.min(toNum(c.value), toNum(c.value2)); const hi = Math.max(toNum(c.value), toNum(c.value2)); return isNum(a) && a >= lo && a <= hi; }\n    case 'date_on': { const d = toDate(v); const t = toDate(c.value); return d !== null && new Date(d).toISOString().slice(0, 10) === new Date(t).toISOString().slice(0, 10); }\n    case 'date_after': { const d = toDate(v); return d !== null && d > toDate(c.value); }\n    case 'date_before': { const d = toDate(v); return d !== null && d < toDate(c.value); }\n    case 'date_between': { const d = toDate(v); const a = toDate(c.value); const b = toDate(c.value2); return d !== null && d >= Math.min(a, b) && d <= Math.max(a, b); }\n    default: return false;\n  }\n}\nfunction rowMatches(row, conds, mode) {\n  if (!conds || conds.length === 0) return true;\n  return mode === 'any' ? conds.some(function (c) { return testCond(row, c); }) : conds.every(function (c) { return testCond(row, c); });\n}\nfunction percentile(sorted, p) {\n  if (sorted.length === 0) return null;\n  const idx = (sorted.length - 1) * p;\n  const lo = Math.floor(idx); const hi = Math.ceil(idx);\n  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);\n}\nfunction numbersOf(values) {\n  const nums = []; let missing = 0; let invalid = 0; const invalidExamples = [];\n  values.forEach(function (v) { const n = toNum(v); if (n === null) missing++; else if (isNaN(n)) { invalid++; if (invalidExamples.length < 5) invalidExamples.push(v); } else nums.push(n); });\n  return { nums: nums, missing: missing, invalid: invalid, invalidExamples: invalidExamples };\n}\nconst AGGS = ['count','count_non_missing','count_distinct','sum','mean','median','min','max','std_dev'];\nfunction normAgg(a) { const s = String(a || 'count').trim().toLowerCase(); if (s === 'avg' || s === 'average') return 'mean'; if (s === 'std' || s === 'stddev' || s === 'standard_deviation') return 'std_dev'; if (s === 'distinct' || s === 'unique') return 'count_distinct'; return s; }\nfunction aggregate(values, agg) {\n  if (agg === 'count') return values.length;\n  if (agg === 'count_non_missing') return values.filter(function (v) { return !isMissing(v); }).length;\n  if (agg === 'count_distinct') { const seen = {}; values.forEach(function (v) { if (!isMissing(v)) seen[String(v).trim()] = 1; }); return Object.keys(seen).length; }\n  const nums = numbersOf(values).nums;\n  if (nums.length === 0) return null;\n  if (agg === 'sum') return nums.reduce(function (a, b) { return a + b; }, 0);\n  if (agg === 'mean') return nums.reduce(function (a, b) { return a + b; }, 0) / nums.length;\n  const sorted = nums.slice().sort(function (a, b) { return a - b; });\n  if (agg === 'median') return percentile(sorted, 0.5);\n  if (agg === 'min') return sorted[0];\n  if (agg === 'max') return sorted[sorted.length - 1];\n  if (agg === 'std_dev') { if (nums.length < 2) return 0; const m = nums.reduce(function (a, b) { return a + b; }, 0) / nums.length; return Math.sqrt(nums.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / (nums.length - 1)); }\n  return null;\n}\n\nconst prep = prepareConditions(args.where);\nif (prep.error) return prep.error;\nconst subset = rows.filter(function (r) { return rowMatches(r, prep.conditions, 'all'); });\nconst requested = asList(args.columns).concat(asList(args.column));\nif (requested.length === 0) return JSON.stringify({ error: 'Specify at least one column to analyse.', available_columns: columns });\nconst results = [];\nfor (let i = 0; i < requested.length; i++) {\n  const col = resolveCol(requested[i]);\n  if (!col) return missingColError(requested[i]);\n  const values = subset.map(function (r) { return r[col]; });\n  const parsed = numbersOf(values);\n  const present = values.length - parsed.missing;\n  const base = { column: col, rows_considered: values.length, missing_count: parsed.missing, non_missing_count: present };\n  if (parsed.nums.length > 0 && parsed.nums.length >= present * 0.5) {\n    const n = parsed.nums; const sorted = n.slice().sort(function (a, b) { return a - b; });\n    const sum = n.reduce(function (a, b) { return a + b; }, 0);\n    const mean = sum / n.length;\n    const ssd = n.reduce(function (a, b) { return a + (b - mean) * (b - mean); }, 0);\n    const freq = {}; let mode = null; let modeCount = 0;\n    n.forEach(function (x) { freq[x] = (freq[x] || 0) + 1; if (freq[x] > modeCount) { modeCount = freq[x]; mode = x; } });\n    const q1 = percentile(sorted, 0.25); const q3 = percentile(sorted, 0.75); const iqr = q3 - q1;\n    const outliers = n.filter(function (x) { return x < q1 - 1.5 * iqr || x > q3 + 1.5 * iqr; }).length;\n    results.push(Object.assign(base, {\n      kind: 'numeric',\n      valid_numeric_count: n.length,\n      invalid_numeric_count: parsed.invalid,\n      invalid_examples: parsed.invalidExamples,\n      sum: round(sum), mean: round(mean), median: round(percentile(sorted, 0.5)),\n      mode: modeCount > 1 ? mode : null, mode_frequency: modeCount > 1 ? modeCount : null,\n      min: sorted[0], max: sorted[sorted.length - 1], range: round(sorted[sorted.length - 1] - sorted[0]),\n      std_dev_sample: n.length > 1 ? round(Math.sqrt(ssd / (n.length - 1))) : 0,\n      std_dev_population: round(Math.sqrt(ssd / n.length)),\n      variance_sample: n.length > 1 ? round(ssd / (n.length - 1)) : 0,\n      q1: round(q1), q3: round(q3), iqr: round(iqr),\n      p10: round(percentile(sorted, 0.1)), p90: round(percentile(sorted, 0.9)),\n      outliers_1_5_iqr: outliers,\n      note: 'Missing and non-numeric values are excluded from calculations and reported separately.'\n    }));\n  } else {\n    const counts = {};\n    values.forEach(function (v) { if (!isMissing(v)) { const k = String(v).trim(); counts[k] = (counts[k] || 0) + 1; } });\n    const top = Object.keys(counts).map(function (k) { return { value: k, count: counts[k], pct: present ? round(counts[k] / present * 100) : 0 }; }).sort(function (a, b) { return b.count - a.count; });\n    results.push(Object.assign(base, { kind: 'categorical', distinct_count: top.length, mode: top.length ? top[0].value : null, top_10_values: top.slice(0, 10), note: 'Column is not numeric, so only counts and frequencies apply.' }));\n  }\n}\nlet correlation = null;\nif (args.correlate_with) {\n  const a = resolveCol(requested[0]); const b = resolveCol(args.correlate_with);\n  if (!b) return missingColError(args.correlate_with);\n  const pairs = [];\n  subset.forEach(function (r) { const x = toNum(r[a]); const y = toNum(r[b]); if (isNum(x) && isNum(y)) pairs.push([x, y]); });\n  if (pairs.length < 3) correlation = { error: 'Fewer than 3 rows have valid numbers in both columns; correlation cannot be computed.' };\n  else {\n    const mx = pairs.reduce(function (s, p) { return s + p[0]; }, 0) / pairs.length;\n    const my = pairs.reduce(function (s, p) { return s + p[1]; }, 0) / pairs.length;\n    let sxy = 0, sxx = 0, syy = 0;\n    pairs.forEach(function (p) { sxy += (p[0] - mx) * (p[1] - my); sxx += (p[0] - mx) * (p[0] - mx); syy += (p[1] - my) * (p[1] - my); });\n    correlation = { column_x: a, column_y: b, pearson_r: sxx && syy ? round(sxy / Math.sqrt(sxx * syy)) : null, pairs_used: pairs.length };\n  }\n}\nreturn JSON.stringify({ tool: 'calculate_statistics', filters_applied: prep.conditions, total_rows: rows.length, rows_after_filters: subset.length, results: results, correlation: correlation });\n",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\"type\":\"object\",\"properties\":{\"columns\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Columns to analyse\"},\"where\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"column\":{\"type\":\"string\",\"description\":\"Exact column name\"},\"operator\":{\"type\":\"string\",\"enum\":[\"equals\",\"not_equals\",\"contains\",\"not_contains\",\"starts_with\",\"ends_with\",\"in\",\"greater_than\",\"greater_or_equal\",\"less_than\",\"less_or_equal\",\"between\",\"date_on\",\"date_after\",\"date_before\",\"date_between\",\"is_empty\",\"is_not_empty\"]},\"value\":{\"type\":\"string\",\"description\":\"Comparison value (number, text, ISO date, or comma-separated list for in)\"},\"value2\":{\"type\":\"string\",\"description\":\"Upper bound for between / date_between\"}},\"required\":[\"column\",\"operator\"]},\"description\":\"Optional filters applied before calculating (AND)\"},\"correlate_with\":{\"type\":\"string\",\"description\":\"Optional numeric column to correlate with the first column\"}},\"required\":[\"columns\"]}"
+      },
+      "id": "063178f2-da4f-466c-b12c-f4eb27be11c7",
+      "name": "calculate_statistics",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        1712,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Grouping and Comparison. Groups rows by one or more columns and computes aggregations (count, sum, mean, median, min, max, std_dev, count_distinct) per group, with ranking, share of total and a highest-vs-lowest comparison. Use for questions like sales by region, average marks by department, top 5 products.",
+        "jsCode": "\nconst ds = $('Load Dataset').first().json;\nlet rows = [];\ntry { rows = JSON.parse(ds.rows_json || '[]'); } catch (e) { return JSON.stringify({ error: 'The stored dataset could not be read. Please upload the file again.' }); }\nlet profile = {};\ntry { profile = JSON.parse(ds.profile_json || '{}'); } catch (e) { profile = {}; }\nconst profileCols = profile.columns || [];\nconst columns = profileCols.length ? profileCols.map(function (c) { return c.name; }) : Object.keys(rows[0] || {});\nlet args = query;\nif (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\nargs = args || {};\nfunction isMissing(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }\nfunction toNum(v) {\n  if (isMissing(v)) return null;\n  if (typeof v === 'number') return isFinite(v) ? v : NaN;\n  if (typeof v === 'boolean') return NaN;\n  const s = String(v).trim().replace(/[ ,$€£₹%]/g, '');\n  if (s === '') return null;\n  const n = Number(s);\n  return isFinite(n) ? n : NaN;\n}\nfunction isNum(n) { return typeof n === 'number' && !isNaN(n); }\nfunction toDate(v) { if (isMissing(v)) return null; const t = Date.parse(String(v).trim()); return isNaN(t) ? null : t; }\nfunction round(n) { return isNum(n) ? Math.round(n * 10000) / 10000 : n; }\nfunction norm(s) { return String(s).trim().toLowerCase().replace(/[^a-z0-9]/g, ''); }\nfunction resolveCol(name) {\n  if (name === undefined || name === null || name === '') return null;\n  const n = String(name);\n  if (columns.indexOf(n) !== -1) return n;\n  const lower = n.trim().toLowerCase();\n  return columns.find(function (c) { return c.toLowerCase() === lower; }) || columns.find(function (c) { return norm(c) === norm(n); }) || null;\n}\nfunction missingColError(name) { return JSON.stringify({ error: 'Column not found in the uploaded dataset: ' + name, available_columns: columns }); }\nfunction asList(v) { if (v === undefined || v === null || v === '') return []; return Array.isArray(v) ? v : [v]; }\nconst OPS = ['equals','not_equals','contains','not_contains','starts_with','ends_with','in','greater_than','greater_or_equal','less_than','less_or_equal','between','date_on','date_after','date_before','date_between','is_empty','is_not_empty'];\nconst NUM_OPS = ['greater_than','greater_or_equal','less_than','less_or_equal','between'];\nconst DATE_OPS = ['date_on','date_after','date_before','date_between'];\nfunction prepareConditions(list) {\n  const out = [];\n  const conds = asList(list);\n  for (let i = 0; i < conds.length; i++) {\n    const c = conds[i] || {};\n    const col = resolveCol(c.column);\n    if (!col) return { error: missingColError(c.column) };\n    const op = String(c.operator || 'equals').trim().toLowerCase();\n    if (OPS.indexOf(op) === -1) return { error: JSON.stringify({ error: 'Unsupported filter operator: ' + op, supported_operators: OPS }) };\n    if (NUM_OPS.indexOf(op) !== -1) {\n      if (!isNum(toNum(c.value)) || (op === 'between' && !isNum(toNum(c.value2)))) return { error: JSON.stringify({ error: 'Operator ' + op + ' needs numeric value(s); got value=' + c.value + (op === 'between' ? ', value2=' + c.value2 : ''), column: col }) };\n    }\n    if (DATE_OPS.indexOf(op) !== -1) {\n      if (toDate(c.value) === null || (op === 'date_between' && toDate(c.value2) === null)) return { error: JSON.stringify({ error: 'Operator ' + op + ' needs valid date value(s) such as 2024-01-31; got value=' + c.value + (op === 'date_between' ? ', value2=' + c.value2 : ''), column: col }) };\n    }\n    out.push({ column: col, operator: op, value: c.value, value2: c.value2 });\n  }\n  return { conditions: out };\n}\nfunction testCond(row, c) {\n  const v = row[c.column];\n  const sv = isMissing(v) ? '' : String(v).trim().toLowerCase();\n  const target = c.value === undefined || c.value === null ? '' : String(c.value).trim().toLowerCase();\n  switch (c.operator) {\n    case 'is_empty': return isMissing(v);\n    case 'is_not_empty': return !isMissing(v);\n    case 'equals': { const a = toNum(v); const b = toNum(c.value); if (isNum(a) && isNum(b)) return a === b; return !isMissing(v) && sv === target; }\n    case 'not_equals': { const a = toNum(v); const b = toNum(c.value); if (isNum(a) && isNum(b)) return a !== b; return sv !== target; }\n    case 'contains': return !isMissing(v) && sv.indexOf(target) !== -1;\n    case 'not_contains': return sv.indexOf(target) === -1;\n    case 'starts_with': return !isMissing(v) && sv.indexOf(target) === 0;\n    case 'ends_with': return !isMissing(v) && sv.length >= target.length && sv.slice(sv.length - target.length) === target;\n    case 'in': { const list = Array.isArray(c.value) ? c.value : String(c.value).split(','); return list.some(function (x) { return String(x).trim().toLowerCase() === sv; }); }\n    case 'greater_than': { const a = toNum(v); return isNum(a) && a > toNum(c.value); }\n    case 'greater_or_equal': { const a = toNum(v); return isNum(a) && a >= toNum(c.value); }\n    case 'less_than': { const a = toNum(v); return isNum(a) && a < toNum(c.value); }\n    case 'less_or_equal': { const a = toNum(v); return isNum(a) && a <= toNum(c.value); }\n    case 'between': { const a = toNum(v); const lo = Math.min(toNum(c.value), toNum(c.value2)); const hi = Math.max(toNum(c.value), toNum(c.value2)); return isNum(a) && a >= lo && a <= hi; }\n    case 'date_on': { const d = toDate(v); const t = toDate(c.value); return d !== null && new Date(d).toISOString().slice(0, 10) === new Date(t).toISOString().slice(0, 10); }\n    case 'date_after': { const d = toDate(v); return d !== null && d > toDate(c.value); }\n    case 'date_before': { const d = toDate(v); return d !== null && d < toDate(c.value); }\n    case 'date_between': { const d = toDate(v); const a = toDate(c.value); const b = toDate(c.value2); return d !== null && d >= Math.min(a, b) && d <= Math.max(a, b); }\n    default: return false;\n  }\n}\nfunction rowMatches(row, conds, mode) {\n  if (!conds || conds.length === 0) return true;\n  return mode === 'any' ? conds.some(function (c) { return testCond(row, c); }) : conds.every(function (c) { return testCond(row, c); });\n}\nfunction percentile(sorted, p) {\n  if (sorted.length === 0) return null;\n  const idx = (sorted.length - 1) * p;\n  const lo = Math.floor(idx); const hi = Math.ceil(idx);\n  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);\n}\nfunction numbersOf(values) {\n  const nums = []; let missing = 0; let invalid = 0; const invalidExamples = [];\n  values.forEach(function (v) { const n = toNum(v); if (n === null) missing++; else if (isNaN(n)) { invalid++; if (invalidExamples.length < 5) invalidExamples.push(v); } else nums.push(n); });\n  return { nums: nums, missing: missing, invalid: invalid, invalidExamples: invalidExamples };\n}\nconst AGGS = ['count','count_non_missing','count_distinct','sum','mean','median','min','max','std_dev'];\nfunction normAgg(a) { const s = String(a || 'count').trim().toLowerCase(); if (s === 'avg' || s === 'average') return 'mean'; if (s === 'std' || s === 'stddev' || s === 'standard_deviation') return 'std_dev'; if (s === 'distinct' || s === 'unique') return 'count_distinct'; return s; }\nfunction aggregate(values, agg) {\n  if (agg === 'count') return values.length;\n  if (agg === 'count_non_missing') return values.filter(function (v) { return !isMissing(v); }).length;\n  if (agg === 'count_distinct') { const seen = {}; values.forEach(function (v) { if (!isMissing(v)) seen[String(v).trim()] = 1; }); return Object.keys(seen).length; }\n  const nums = numbersOf(values).nums;\n  if (nums.length === 0) return null;\n  if (agg === 'sum') return nums.reduce(function (a, b) { return a + b; }, 0);\n  if (agg === 'mean') return nums.reduce(function (a, b) { return a + b; }, 0) / nums.length;\n  const sorted = nums.slice().sort(function (a, b) { return a - b; });\n  if (agg === 'median') return percentile(sorted, 0.5);\n  if (agg === 'min') return sorted[0];\n  if (agg === 'max') return sorted[sorted.length - 1];\n  if (agg === 'std_dev') { if (nums.length < 2) return 0; const m = nums.reduce(function (a, b) { return a + b; }, 0) / nums.length; return Math.sqrt(nums.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / (nums.length - 1)); }\n  return null;\n}\n\nconst groupCols = [];\nconst gb = asList(args.group_by);\nif (gb.length === 0) return JSON.stringify({ error: 'group_by needs at least one column.', available_columns: columns });\nfor (let i = 0; i < gb.length; i++) { const c = resolveCol(gb[i]); if (!c) return missingColError(gb[i]); groupCols.push(c); }\nlet metrics = asList(args.metrics);\nif (metrics.length === 0) metrics = [{ aggregation: 'count' }];\nconst metricDefs = [];\nfor (let i = 0; i < metrics.length; i++) {\n  const m = metrics[i] || {};\n  const agg = normAgg(m.aggregation);\n  if (AGGS.indexOf(agg) === -1) return JSON.stringify({ error: 'Unsupported aggregation: ' + m.aggregation, supported_aggregations: AGGS });\n  let col = null;\n  if (agg !== 'count') { col = resolveCol(m.column); if (!col) return m.column ? missingColError(m.column) : JSON.stringify({ error: 'Aggregation ' + agg + ' needs a column.' }); }\n  metricDefs.push({ column: col, aggregation: agg, label: agg === 'count' ? 'count' : agg + '_' + col });\n}\nconst prep = prepareConditions(args.where);\nif (prep.error) return prep.error;\nconst subset = rows.filter(function (r) { return rowMatches(r, prep.conditions, 'all'); });\nconst groups = {};\nsubset.forEach(function (r) {\n  const keyParts = groupCols.map(function (c) { return isMissing(r[c]) ? '(missing)' : String(r[c]).trim(); });\n  const key = JSON.stringify(keyParts);\n  if (!groups[key]) groups[key] = { parts: keyParts, rows: [] };\n  groups[key].rows.push(r);\n});\nconst invalidNotes = [];\nmetricDefs.forEach(function (m) { if (m.column && ['sum','mean','median','min','max','std_dev'].indexOf(m.aggregation) !== -1) { const p = numbersOf(subset.map(function (r) { return r[m.column]; })); if (p.invalid || p.missing) invalidNotes.push({ column: m.column, missing_excluded: p.missing, non_numeric_excluded: p.invalid, examples: p.invalidExamples }); } });\nlet out = Object.keys(groups).map(function (k) {\n  const g = groups[k]; const o = {};\n  groupCols.forEach(function (c, idx) { o[c] = g.parts[idx]; });\n  o.row_count = g.rows.length;\n  metricDefs.forEach(function (m) { o[m.label] = round(aggregate(m.column ? g.rows.map(function (r) { return r[m.column]; }) : g.rows, m.aggregation)); });\n  return o;\n});\nmetricDefs.forEach(function (m) {\n  if (m.aggregation === 'sum' || m.aggregation === 'count') {\n    const total = out.reduce(function (s, o) { return s + (isNum(o[m.label]) ? o[m.label] : 0); }, 0);\n    out.forEach(function (o) { o['share_pct_' + m.label] = total ? round(o[m.label] / total * 100) : null; });\n  }\n});\nlet sortKey = metricDefs[0].label;\nif (args.sort_by) { const s = String(args.sort_by); const found = metricDefs.find(function (m) { return m.label === s || m.column === resolveCol(s) || m.aggregation === normAgg(s); }); if (found) sortKey = found.label; else if (resolveCol(s) && groupCols.indexOf(resolveCol(s)) !== -1) sortKey = resolveCol(s); }\nconst dir = String(args.sort_direction || 'desc').toLowerCase() === 'asc' ? 1 : -1;\nout.sort(function (a, b) { const x = a[sortKey]; const y = b[sortKey]; if (isNum(x) && isNum(y)) return (x - y) * dir; if (x === null) return 1; if (y === null) return -1; return String(x).localeCompare(String(y)) * dir; });\nout.forEach(function (o, i) { o.rank = i + 1; });\nconst topN = Math.min(Math.max(parseInt(args.top_n, 10) || 50, 1), 200);\nlet comparison = null;\nconst numeric = out.filter(function (o) { return isNum(o[sortKey]); });\nif (numeric.length >= 2) {\n  const hi = numeric.reduce(function (a, b) { return b[sortKey] > a[sortKey] ? b : a; });\n  const lo = numeric.reduce(function (a, b) { return b[sortKey] < a[sortKey] ? b : a; });\n  const label = function (o) { return groupCols.map(function (c) { return o[c]; }).join(' / '); };\n  comparison = { metric: sortKey, highest: { group: label(hi), value: hi[sortKey] }, lowest: { group: label(lo), value: lo[sortKey] }, difference: round(hi[sortKey] - lo[sortKey]), ratio_highest_to_lowest: lo[sortKey] ? round(hi[sortKey] / lo[sortKey]) : null };\n}\nreturn JSON.stringify({ tool: 'group_and_aggregate', group_by: groupCols, metrics: metricDefs, filters_applied: prep.conditions, rows_after_filters: subset.length, group_count: out.length, sorted_by: { key: sortKey, direction: dir === 1 ? 'asc' : 'desc' }, groups: out.slice(0, topN), groups_truncated: out.length > topN, comparison: comparison, excluded_values: invalidNotes });\n",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\"type\":\"object\",\"properties\":{\"group_by\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Columns to group by\"},\"metrics\":{\"type\":\"array\",\"description\":\"Aggregations to compute per group (default count)\",\"items\":{\"type\":\"object\",\"properties\":{\"column\":{\"type\":\"string\",\"description\":\"Column to aggregate (not needed for count)\"},\"aggregation\":{\"type\":\"string\",\"enum\":[\"count\",\"count_non_missing\",\"count_distinct\",\"sum\",\"mean\",\"median\",\"min\",\"max\",\"std_dev\"]}},\"required\":[\"aggregation\"]}},\"where\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"column\":{\"type\":\"string\",\"description\":\"Exact column name\"},\"operator\":{\"type\":\"string\",\"enum\":[\"equals\",\"not_equals\",\"contains\",\"not_contains\",\"starts_with\",\"ends_with\",\"in\",\"greater_than\",\"greater_or_equal\",\"less_than\",\"less_or_equal\",\"between\",\"date_on\",\"date_after\",\"date_before\",\"date_between\",\"is_empty\",\"is_not_empty\"]},\"value\":{\"type\":\"string\",\"description\":\"Comparison value (number, text, ISO date, or comma-separated list for in)\"},\"value2\":{\"type\":\"string\",\"description\":\"Upper bound for between / date_between\"}},\"required\":[\"column\",\"operator\"]},\"description\":\"Optional filters applied before grouping (AND)\"},\"sort_by\":{\"type\":\"string\",\"description\":\"Metric label (e.g. sum_sales) or column to rank by; default first metric\"},\"sort_direction\":{\"type\":\"string\",\"enum\":[\"asc\",\"desc\"]},\"top_n\":{\"type\":\"number\",\"description\":\"Max groups to return (default 50)\"}},\"required\":[\"group_by\"]}"
+      },
+      "id": "2670ee7a-e501-4a5c-8b6b-a0106179724b",
+      "name": "group_and_aggregate",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        1840,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Data Visualization. Builds a chart image from the dataset and returns a chart_url (PNG link) plus the plotted data. Types: bar / horizontal_bar / pie (aggregate y_column by x_column categories), line (trend over x, sorted by number or date), histogram (distribution of numeric x_column), scatter (numeric x_column vs y_column).",
+        "jsCode": "\nconst ds = $('Load Dataset').first().json;\nlet rows = [];\ntry { rows = JSON.parse(ds.rows_json || '[]'); } catch (e) { return JSON.stringify({ error: 'The stored dataset could not be read. Please upload the file again.' }); }\nlet profile = {};\ntry { profile = JSON.parse(ds.profile_json || '{}'); } catch (e) { profile = {}; }\nconst profileCols = profile.columns || [];\nconst columns = profileCols.length ? profileCols.map(function (c) { return c.name; }) : Object.keys(rows[0] || {});\nlet args = query;\nif (typeof args === 'string') { try { args = JSON.parse(args); } catch (e) { args = {}; } }\nargs = args || {};\nfunction isMissing(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }\nfunction toNum(v) {\n  if (isMissing(v)) return null;\n  if (typeof v === 'number') return isFinite(v) ? v : NaN;\n  if (typeof v === 'boolean') return NaN;\n  const s = String(v).trim().replace(/[ ,$€£₹%]/g, '');\n  if (s === '') return null;\n  const n = Number(s);\n  return isFinite(n) ? n : NaN;\n}\nfunction isNum(n) { return typeof n === 'number' && !isNaN(n); }\nfunction toDate(v) { if (isMissing(v)) return null; const t = Date.parse(String(v).trim()); return isNaN(t) ? null : t; }\nfunction round(n) { return isNum(n) ? Math.round(n * 10000) / 10000 : n; }\nfunction norm(s) { return String(s).trim().toLowerCase().replace(/[^a-z0-9]/g, ''); }\nfunction resolveCol(name) {\n  if (name === undefined || name === null || name === '') return null;\n  const n = String(name);\n  if (columns.indexOf(n) !== -1) return n;\n  const lower = n.trim().toLowerCase();\n  return columns.find(function (c) { return c.toLowerCase() === lower; }) || columns.find(function (c) { return norm(c) === norm(n); }) || null;\n}\nfunction missingColError(name) { return JSON.stringify({ error: 'Column not found in the uploaded dataset: ' + name, available_columns: columns }); }\nfunction asList(v) { if (v === undefined || v === null || v === '') return []; return Array.isArray(v) ? v : [v]; }\nconst OPS = ['equals','not_equals','contains','not_contains','starts_with','ends_with','in','greater_than','greater_or_equal','less_than','less_or_equal','between','date_on','date_after','date_before','date_between','is_empty','is_not_empty'];\nconst NUM_OPS = ['greater_than','greater_or_equal','less_than','less_or_equal','between'];\nconst DATE_OPS = ['date_on','date_after','date_before','date_between'];\nfunction prepareConditions(list) {\n  const out = [];\n  const conds = asList(list);\n  for (let i = 0; i < conds.length; i++) {\n    const c = conds[i] || {};\n    const col = resolveCol(c.column);\n    if (!col) return { error: missingColError(c.column) };\n    const op = String(c.operator || 'equals').trim().toLowerCase();\n    if (OPS.indexOf(op) === -1) return { error: JSON.stringify({ error: 'Unsupported filter operator: ' + op, supported_operators: OPS }) };\n    if (NUM_OPS.indexOf(op) !== -1) {\n      if (!isNum(toNum(c.value)) || (op === 'between' && !isNum(toNum(c.value2)))) return { error: JSON.stringify({ error: 'Operator ' + op + ' needs numeric value(s); got value=' + c.value + (op === 'between' ? ', value2=' + c.value2 : ''), column: col }) };\n    }\n    if (DATE_OPS.indexOf(op) !== -1) {\n      if (toDate(c.value) === null || (op === 'date_between' && toDate(c.value2) === null)) return { error: JSON.stringify({ error: 'Operator ' + op + ' needs valid date value(s) such as 2024-01-31; got value=' + c.value + (op === 'date_between' ? ', value2=' + c.value2 : ''), column: col }) };\n    }\n    out.push({ column: col, operator: op, value: c.value, value2: c.value2 });\n  }\n  return { conditions: out };\n}\nfunction testCond(row, c) {\n  const v = row[c.column];\n  const sv = isMissing(v) ? '' : String(v).trim().toLowerCase();\n  const target = c.value === undefined || c.value === null ? '' : String(c.value).trim().toLowerCase();\n  switch (c.operator) {\n    case 'is_empty': return isMissing(v);\n    case 'is_not_empty': return !isMissing(v);\n    case 'equals': { const a = toNum(v); const b = toNum(c.value); if (isNum(a) && isNum(b)) return a === b; return !isMissing(v) && sv === target; }\n    case 'not_equals': { const a = toNum(v); const b = toNum(c.value); if (isNum(a) && isNum(b)) return a !== b; return sv !== target; }\n    case 'contains': return !isMissing(v) && sv.indexOf(target) !== -1;\n    case 'not_contains': return sv.indexOf(target) === -1;\n    case 'starts_with': return !isMissing(v) && sv.indexOf(target) === 0;\n    case 'ends_with': return !isMissing(v) && sv.length >= target.length && sv.slice(sv.length - target.length) === target;\n    case 'in': { const list = Array.isArray(c.value) ? c.value : String(c.value).split(','); return list.some(function (x) { return String(x).trim().toLowerCase() === sv; }); }\n    case 'greater_than': { const a = toNum(v); return isNum(a) && a > toNum(c.value); }\n    case 'greater_or_equal': { const a = toNum(v); return isNum(a) && a >= toNum(c.value); }\n    case 'less_than': { const a = toNum(v); return isNum(a) && a < toNum(c.value); }\n    case 'less_or_equal': { const a = toNum(v); return isNum(a) && a <= toNum(c.value); }\n    case 'between': { const a = toNum(v); const lo = Math.min(toNum(c.value), toNum(c.value2)); const hi = Math.max(toNum(c.value), toNum(c.value2)); return isNum(a) && a >= lo && a <= hi; }\n    case 'date_on': { const d = toDate(v); const t = toDate(c.value); return d !== null && new Date(d).toISOString().slice(0, 10) === new Date(t).toISOString().slice(0, 10); }\n    case 'date_after': { const d = toDate(v); return d !== null && d > toDate(c.value); }\n    case 'date_before': { const d = toDate(v); return d !== null && d < toDate(c.value); }\n    case 'date_between': { const d = toDate(v); const a = toDate(c.value); const b = toDate(c.value2); return d !== null && d >= Math.min(a, b) && d <= Math.max(a, b); }\n    default: return false;\n  }\n}\nfunction rowMatches(row, conds, mode) {\n  if (!conds || conds.length === 0) return true;\n  return mode === 'any' ? conds.some(function (c) { return testCond(row, c); }) : conds.every(function (c) { return testCond(row, c); });\n}\nfunction percentile(sorted, p) {\n  if (sorted.length === 0) return null;\n  const idx = (sorted.length - 1) * p;\n  const lo = Math.floor(idx); const hi = Math.ceil(idx);\n  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);\n}\nfunction numbersOf(values) {\n  const nums = []; let missing = 0; let invalid = 0; const invalidExamples = [];\n  values.forEach(function (v) { const n = toNum(v); if (n === null) missing++; else if (isNaN(n)) { invalid++; if (invalidExamples.length < 5) invalidExamples.push(v); } else nums.push(n); });\n  return { nums: nums, missing: missing, invalid: invalid, invalidExamples: invalidExamples };\n}\nconst AGGS = ['count','count_non_missing','count_distinct','sum','mean','median','min','max','std_dev'];\nfunction normAgg(a) { const s = String(a || 'count').trim().toLowerCase(); if (s === 'avg' || s === 'average') return 'mean'; if (s === 'std' || s === 'stddev' || s === 'standard_deviation') return 'std_dev'; if (s === 'distinct' || s === 'unique') return 'count_distinct'; return s; }\nfunction aggregate(values, agg) {\n  if (agg === 'count') return values.length;\n  if (agg === 'count_non_missing') return values.filter(function (v) { return !isMissing(v); }).length;\n  if (agg === 'count_distinct') { const seen = {}; values.forEach(function (v) { if (!isMissing(v)) seen[String(v).trim()] = 1; }); return Object.keys(seen).length; }\n  const nums = numbersOf(values).nums;\n  if (nums.length === 0) return null;\n  if (agg === 'sum') return nums.reduce(function (a, b) { return a + b; }, 0);\n  if (agg === 'mean') return nums.reduce(function (a, b) { return a + b; }, 0) / nums.length;\n  const sorted = nums.slice().sort(function (a, b) { return a - b; });\n  if (agg === 'median') return percentile(sorted, 0.5);\n  if (agg === 'min') return sorted[0];\n  if (agg === 'max') return sorted[sorted.length - 1];\n  if (agg === 'std_dev') { if (nums.length < 2) return 0; const m = nums.reduce(function (a, b) { return a + b; }, 0) / nums.length; return Math.sqrt(nums.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / (nums.length - 1)); }\n  return null;\n}\n\nconst type = String(args.chart_type || 'bar').trim().toLowerCase();\nconst TYPES = ['bar','horizontal_bar','line','pie','histogram','scatter'];\nif (TYPES.indexOf(type) === -1) return JSON.stringify({ error: 'Unsupported chart type: ' + type, supported_chart_types: TYPES });\nconst xCol = resolveCol(args.x_column);\nif (!xCol) return args.x_column ? missingColError(args.x_column) : JSON.stringify({ error: 'x_column is required.', available_columns: columns });\nlet yCol = null;\nif (args.y_column) { yCol = resolveCol(args.y_column); if (!yCol) return missingColError(args.y_column); }\nconst prep = prepareConditions(args.where);\nif (prep.error) return prep.error;\nconst subset = rows.filter(function (r) { return rowMatches(r, prep.conditions, 'all'); });\nlet labels = []; let data = []; let cfg = null; let excluded = 0;\nlet title = args.title ? String(args.title) : '';\nconst topN = Math.min(Math.max(parseInt(args.top_n, 10) || 20, 2), 50);\nif (type === 'histogram') {\n  const p = numbersOf(subset.map(function (r) { return r[xCol]; }));\n  excluded = p.missing + p.invalid;\n  if (p.nums.length < 2) return JSON.stringify({ error: 'Histogram needs a numeric column with at least 2 valid values; ' + xCol + ' has ' + p.nums.length + '.' });\n  const bins = Math.min(Math.max(parseInt(args.bins, 10) || 10, 2), 50);\n  const min = Math.min.apply(null, p.nums); const max = Math.max.apply(null, p.nums);\n  const width = (max - min) / bins || 1;\n  const counts = new Array(bins).fill(0);\n  p.nums.forEach(function (x) { let i = Math.floor((x - min) / width); if (i >= bins) i = bins - 1; counts[i]++; });\n  labels = counts.map(function (c, i) { return round(min + i * width) + '-' + round(min + (i + 1) * width); });\n  data = counts;\n  title = title || ('Distribution of ' + xCol);\n  cfg = { type: 'bar', data: { labels: labels, datasets: [{ label: 'Count', data: data, backgroundColor: 'rgba(54,162,235,0.7)' }] }, options: { title: { display: true, text: title }, legend: { display: false }, scales: { xAxes: [{ scaleLabel: { display: true, labelString: xCol }, barPercentage: 1.0, categoryPercentage: 1.0 }], yAxes: [{ ticks: { beginAtZero: true }, scaleLabel: { display: true, labelString: 'Frequency' } }] } } };\n} else if (type === 'scatter') {\n  if (!yCol) return JSON.stringify({ error: 'Scatter plots need both x_column and y_column (numeric).' });\n  const pts = [];\n  subset.forEach(function (r) { const x = toNum(r[xCol]); const y = toNum(r[yCol]); if (isNum(x) && isNum(y)) pts.push({ x: x, y: y }); else excluded++; });\n  if (pts.length < 2) return JSON.stringify({ error: 'Fewer than 2 rows have valid numbers in both ' + xCol + ' and ' + yCol + '.' });\n  const maxPts = 300;\n  const step = Math.ceil(pts.length / maxPts);\n  const plotted = pts.filter(function (p, i) { return i % step === 0; });\n  data = plotted;\n  title = title || (yCol + ' vs ' + xCol);\n  cfg = { type: 'scatter', data: { datasets: [{ label: yCol + ' vs ' + xCol, data: plotted, backgroundColor: 'rgba(255,99,132,0.7)' }] }, options: { title: { display: true, text: title }, scales: { xAxes: [{ scaleLabel: { display: true, labelString: xCol } }], yAxes: [{ scaleLabel: { display: true, labelString: yCol } }] } } };\n  if (step > 1) title += ' (sampled every ' + step + ' points)';\n} else {\n  const agg = normAgg(args.aggregation || (yCol ? 'sum' : 'count'));\n  if (AGGS.indexOf(agg) === -1) return JSON.stringify({ error: 'Unsupported aggregation: ' + args.aggregation, supported_aggregations: AGGS });\n  if (agg !== 'count' && !yCol) return JSON.stringify({ error: 'Aggregation ' + agg + ' needs y_column.' });\n  const groups = {}; const order = [];\n  subset.forEach(function (r) { const k = isMissing(r[xCol]) ? '(missing)' : String(r[xCol]).trim(); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(yCol ? r[yCol] : r); });\n  let pairs = order.map(function (k) { return { label: k, value: round(aggregate(groups[k], agg)) }; }).filter(function (p) { return p.value !== null; });\n  if (type === 'line') {\n    const allNum = pairs.every(function (p) { return isNum(toNum(p.label)); });\n    const allDate = pairs.every(function (p) { return toDate(p.label) !== null; });\n    if (allNum) pairs.sort(function (a, b) { return toNum(a.label) - toNum(b.label); });\n    else if (allDate) pairs.sort(function (a, b) { return toDate(a.label) - toDate(b.label); });\n    if (pairs.length > 100) pairs = pairs.slice(pairs.length - 100);\n  } else {\n    pairs.sort(function (a, b) { return b.value - a.value; });\n    pairs = pairs.slice(0, type === 'pie' ? Math.min(topN, 12) : topN);\n  }\n  labels = pairs.map(function (p) { return p.label; });\n  data = pairs.map(function (p) { return p.value; });\n  const yLabel = agg === 'count' ? 'Count' : agg + ' of ' + yCol;\n  title = title || (yLabel + ' by ' + xCol);\n  const chartType = type === 'horizontal_bar' ? 'horizontalBar' : type;\n  cfg = { type: chartType, data: { labels: labels, datasets: [{ label: yLabel, data: data, fill: false, borderColor: 'rgb(54,162,235)', backgroundColor: type === 'pie' ? undefined : 'rgba(54,162,235,0.7)' }] }, options: { title: { display: true, text: title }, legend: { display: type === 'pie' } } };\n  if (type === 'pie') cfg.options.plugins = { datalabels: { color: '#fff' } };\n}\nconst url = 'https://quickchart.io/chart?w=900&h=500&bkg=white&c=' + encodeURIComponent(JSON.stringify(cfg));\nreturn JSON.stringify({ tool: 'create_chart', chart_type: type, title: title, x_column: xCol, y_column: yCol, rows_after_filters: subset.length, rows_excluded_missing_or_invalid: excluded, points_plotted: data.length, chart_url: url, plotted_data_preview: labels.length ? labels.slice(0, 50).map(function (l, i) { return { label: l, value: data[i] }; }) : data.slice(0, 20) });\n",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\"type\":\"object\",\"properties\":{\"chart_type\":{\"type\":\"string\",\"enum\":[\"bar\",\"horizontal_bar\",\"line\",\"pie\",\"histogram\",\"scatter\"]},\"x_column\":{\"type\":\"string\",\"description\":\"Category / x-axis column (numeric column for histogram)\"},\"y_column\":{\"type\":\"string\",\"description\":\"Value column (required for scatter and non-count aggregations)\"},\"aggregation\":{\"type\":\"string\",\"enum\":[\"count\",\"sum\",\"mean\",\"median\",\"min\",\"max\",\"count_distinct\"],\"description\":\"For bar/line/pie (default sum with y_column, else count)\"},\"bins\":{\"type\":\"number\",\"description\":\"Histogram bins (default 10)\"},\"top_n\":{\"type\":\"number\",\"description\":\"Max categories for bar/pie (default 20)\"},\"where\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"column\":{\"type\":\"string\",\"description\":\"Exact column name\"},\"operator\":{\"type\":\"string\",\"enum\":[\"equals\",\"not_equals\",\"contains\",\"not_contains\",\"starts_with\",\"ends_with\",\"in\",\"greater_than\",\"greater_or_equal\",\"less_than\",\"less_or_equal\",\"between\",\"date_on\",\"date_after\",\"date_before\",\"date_between\",\"is_empty\",\"is_not_empty\"]},\"value\":{\"type\":\"string\",\"description\":\"Comparison value (number, text, ISO date, or comma-separated list for in)\"},\"value2\":{\"type\":\"string\",\"description\":\"Upper bound for between / date_between\"}},\"required\":[\"column\",\"operator\"]},\"description\":\"Optional filters (AND)\"},\"title\":{\"type\":\"string\"}},\"required\":[\"chart_type\",\"x_column\"]}"
+      },
+      "id": "f2193072-6d00-48af-ac42-a5017ffb502a",
+      "name": "create_chart",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        1968,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Save or update ONE long-term memory (a user-defined metric definition, a reusable named filter, or a reporting preference). Saving with an existing memory_key overwrites the old value. Only call when the user explicitly asks to remember/save something. Never store datasets, raw records or whole conversations.",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "hJLB0dXmsL6qNgWC",
+          "cachedResultName": "analysis_memory"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "memory_key",
+              "keyValue": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('memory_key', 'Short unique snake_case key, e.g. metric_profit_margin or filter_big_deals') }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "memory_key": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('memory_key', 'Short unique snake_case key, e.g. metric_profit_margin or filter_big_deals') }}",
+            "memory_type": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('memory_type', 'One of: metric_definition, saved_filter, preference') }}",
+            "content": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('content', 'The definition/filter/preference in plain words, max 500 characters') }}",
+            "updated_on": "={{ $now.toISO() }}"
+          },
+          "schema": [
+            {
+              "id": "memory_key",
+              "displayName": "memory_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "memory_type",
+              "displayName": "memory_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "content",
+              "displayName": "content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_on",
+              "displayName": "updated_on",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1e065c91-7d8a-4559-9a7f-9a3b4b409c36",
+      "name": "save_memory",
+      "type": "n8n-nodes-base.dataTableTool",
+      "typeVersion": 1.1,
+      "position": [
+        2096,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "List saved long-term memories (metric definitions, saved filters, preferences). Call at the start of a session, when the user refers to a saved metric/filter/preference, or when they ask what you remember.",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "hJLB0dXmsL6qNgWC",
+          "cachedResultName": "analysis_memory"
+        },
+        "orderBy": true,
+        "orderByColumn": "updated_on"
+      },
+      "id": "ea21453f-32e5-4a54-bb6d-4441a4d4677a",
+      "name": "recall_memories",
+      "type": "n8n-nodes-base.dataTableTool",
+      "typeVersion": 1.1,
+      "position": [
+        2224,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Delete ONE saved memory by its exact memory_key. Only call when the user explicitly asks to forget/remove it; call recall_memories first to get the exact key.",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "hJLB0dXmsL6qNgWC",
+          "cachedResultName": "analysis_memory"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "memory_key",
+              "keyValue": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('memory_key', 'Exact memory_key to delete') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "197c4789-ff27-48ec-9425-370e8f333d0f",
+      "name": "forget_memory",
+      "type": "n8n-nodes-base.dataTableTool",
+      "typeVersion": 1.1,
+      "position": [
+        2352,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "err1",
+              "name": "output",
+              "type": "string",
+              "value": "No dataset has been uploaded yet. Attach a .csv or .xlsx file in the chat along with your question."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8247f341-7041-4bc0-ab17-8eda6310610e",
+      "name": "No Dataset Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1584,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "out",
+              "name": "output",
+              "type": "string",
+              "value": "={{ 'Could not use ' + $json.file_name + ': ' + $json.error }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6176ba64-8fd7-4233-9320-4966376a3bec",
+      "name": "Return Invalid Dataset",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2672,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "out",
+              "name": "output",
+              "type": "string",
+              "value": "={{ typeof $json.error === 'string' ? $json.error : ($json.error && $json.error.message ? 'The file could not be parsed: ' + $json.error.message : 'The request could not be processed. Upload a valid .csv or .xlsx file and ask a question.') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f58b1ed6-a9df-45f6-9e80-7444af8ec42f",
+      "name": "Return Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2336,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "binaryPropertyName": "={{ $json.binary_key }}",
+        "options": {
+          "headerRow": true,
+          "includeEmptyCells": true
+        }
+      },
+      "id": "72a1f1a8-d376-4e2b-94ca-5818cbd2461a",
+      "name": "Parse Excel",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1584,
+        240
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Upload File and Ask": {
+      "main": [
+        [
+          {
+            "node": "Inspect Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inspect Request": {
+      "main": [
+        [
+          {
+            "node": "Route Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Request": {
+      "main": [
+        [
+          {
+            "node": "Parse CSV",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse Excel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Dataset",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse CSV": {
+      "main": [
+        [
+          {
+            "node": "Profile Dataset",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profile Dataset": {
+      "main": [
+        [
+          {
+            "node": "Dataset Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dataset Valid?": {
+      "main": [
+        [
+          {
+            "node": "Store Dataset",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Invalid Dataset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Dataset": {
+      "main": [
+        [
+          {
+            "node": "Load Dataset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Dataset": {
+      "main": [
+        [
+          {
+            "node": "Dataset Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dataset Found?": {
+      "main": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Dataset Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversation Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "explore_dataset": {
+      "ai_tool": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "filter_records": {
+      "ai_tool": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "calculate_statistics": {
+      "ai_tool": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "group_and_aggregate": {
+      "ai_tool": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create_chart": {
+      "ai_tool": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "save_memory": {
+      "ai_tool": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "recall_memories": {
+      "ai_tool": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "forget_memory": {
+      "ai_tool": [
+        [
+          {
+            "node": "Data Analysis Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Excel": {
+      "main": [
+        [
+          {
+            "node": "Profile Dataset",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "versionId": "7a500d36-141d-4e5d-be26-38ef948db201",
+  "meta": {
+    "instanceId": "4fb42c8dea729edcad84485871dd51be9ecacc8daf26046902a5853508729168"
+  },
+  "nodeGroups": [
+    {
+      "id": "47398791-5936-4788-9f8e-004a90ee3bfa",
+      "name": "Route incoming request",
+      "nodeIds": [
+        "4225c426-4c0e-4607-8676-f75ddddd4294",
+        "f8a61543-1db9-419b-8193-5ef0dfbf9265"
+      ],
+      "description": "Checks the chat message for an attached CSV/Excel file and a question, and rejects unsupported file types"
+    },
+    {
+      "id": "9f63c4b7-097d-4286-b335-91b3c29bac0e",
+      "name": "Profile and save dataset",
+      "nodeIds": [
+        "0c02f76d-e960-438b-9df9-ea21e0f26b60",
+        "0136242b-5548-459b-927f-524640d4c0d3",
+        "84c344df-506d-4932-a2fd-888b3492f606",
+        "6176ba64-8fd7-4233-9320-4966376a3bec"
+      ],
+      "description": "Detects column types and missing values, then saves the uploaded file for analysis"
+    },
+    {
+      "id": "8e7aaf26-24e8-4a94-af2b-4420b3d1dc80",
+      "name": "Answer data question",
+      "nodeIds": [
+        "a69ea5e5-e7ab-40ff-bd45-951d0173c7be",
+        "758fe731-eaf6-4fec-98e9-1b9c0cf3d714",
+        "8247f341-7041-4bc0-ab17-8eda6310610e",
+        "01e98494-8a71-44a9-9207-0c59438ecd1e",
+        "1b5be51e-2218-4f7f-8935-808848113a9a",
+        "9f972046-4669-4596-bca1-65ad550b79e4",
+        "4536ca67-cffd-45ec-913b-bdc30c7f3bfe",
+        "0d57d51d-da51-4f9f-81c3-cdd1a0fa543b",
+        "063178f2-da4f-466c-b12c-f4eb27be11c7",
+        "2670ee7a-e501-4a5c-8b6b-a0106179724b",
+        "f2193072-6d00-48af-ac42-a5017ffb502a",
+        "1e065c91-7d8a-4559-9a7f-9a3b4b409c36",
+        "ea21453f-32e5-4a54-bb6d-4441a4d4677a",
+        "197c4789-ff27-48ec-9425-370e8f333d0f"
+      ],
+      "description": "Uses this chat's latest uploaded dataset; the agent runs stats, filter, grouping, chart and memory tools and replies in chat"
+    }
+  ],
+  "id": "702VoWAOE1SNRN5F",
+  "tags": []
+}
